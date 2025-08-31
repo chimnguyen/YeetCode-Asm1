@@ -13,7 +13,7 @@ describe('mockingoose', () => {
         it('Validate Model', async () => {
             const todo = new Note({
                 title: "Task Note",
-                description: "" // "This can't be blank"
+                description: "This is a valid description" 
             });
 
             const result = await todo.validateSync();
