@@ -23,6 +23,10 @@ jobs:
         run: npm install
         working-directory: ./src
 
+      - name: Install Playwright browsers
+        run: npx playwright install
+        working-directory: ./src
+
       - name: Run unit tests
         run: npm test
         working-directory: ./src
