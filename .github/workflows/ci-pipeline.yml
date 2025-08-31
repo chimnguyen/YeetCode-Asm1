@@ -33,7 +33,7 @@ jobs:
         run: npm run lint
 
       - name: Run unit tests with coverage
-        run: npm run test:coverage
+        run: npm run test:unit
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
@@ -127,8 +127,8 @@ jobs:
           name: e2e-test-results
           path: |
             e2e-report.txt
-            cypress/screenshots/
-            cypress/videos/
+           test-results/
+           playwright-report/
 
       - name: Stop application
         if: always()
