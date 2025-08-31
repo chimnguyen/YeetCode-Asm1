@@ -4,6 +4,7 @@
   "description": "Simple notes application built with Node.js, Express, and MongoDB",
   "main": "app.js",
   "scripts": {
+    "lint": "eslint .",
     "start": "node app.js",
     "dev": "nodemon app.js",
     "test": "jest",
