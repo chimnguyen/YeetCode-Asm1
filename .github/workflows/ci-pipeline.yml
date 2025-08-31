@@ -127,8 +127,8 @@ jobs:
           name: e2e-test-results
           path: |
             e2e-report.txt
-           test-results/
-           playwright-report/
+            cypress/screenshots/
+            cypress/videos/
 
       - name: Stop application
         if: always()
