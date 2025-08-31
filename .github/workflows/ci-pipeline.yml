@@ -1,14 +1,72 @@
-name: Notes Application CI Pipeline
+name: YeetCode CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: ["*"] # Trigger on all branches for Distinction level
   pull_request:
-    branches: [main]
+    branches: ["main"]
 
 jobs:
-  build-and-test:
+  # CI Job - runs on all branches
+  ci:
+    name: Continuous Integration
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint (Static Code Analysis)
+        run: npm run lint
+
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Archive test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results.xml
+
+  # End-to-End Testing Job
+  e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: ci
+
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "echo 'db.runCommand(\"ping\").ok' | mongosh localhost:27017/test --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -17,33 +75,123 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.x
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
-        working-directory: ./src
+        run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install
-        working-directory: ./src
-
-      - name: Run unit tests
-        run: npm test
-        working-directory: ./src
-
-      - name: Start app server
+      - name: Wait for MongoDB to be ready
         run: |
-          nohup npm start &
-          sleep 10
-        working-directory: ./src
+          until mongosh --host localhost:27017 --eval "print('MongoDB is ready')" > /dev/null 2>&1; do
+            echo "Waiting for MongoDB..."
+            sleep 2
+          done
 
-      - name: Run Playwright E2E tests
+      - name: Start application in background
+        run: |
+          npm start &
+          echo $! > app.pid
+        env:
+          NODE_ENV: test
+          MONGODB_URI: mongodb://localhost:27017/yeetcode_test
+
+      - name: Wait for application to start
+        run: |
+          timeout 30 bash -c 'until curl -f http://localhost:3000/health > /dev/null 2>&1; do sleep 1; done' || {
+            echo "Application failed to start"
+            cat app.log || echo "No app log found"
+            exit 1
+          }
+
+      - name: Run end-to-end tests
         run: npm run test:e2e
-        working-directory: ./src
+        continue-on-error: true
+        id: e2e-tests
 
-      - name: Upload Playwright HTML report
+      - name: Generate E2E test report
         if: always()
+        run: |
+          echo "E2E Test Results:" > e2e-report.txt
+          if [ "${{ steps.e2e-tests.outcome }}" = "success" ]; then
+            echo "✅ All E2E tests passed" >> e2e-report.txt
+          else
+            echo "❌ E2E tests failed" >> e2e-report.txt
+            echo "Check the logs above for detailed error messages" >> e2e-report.txt
+          fi
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: |
+            e2e-report.txt
+            cypress/screenshots/
+            cypress/videos/
+
+      - name: Stop application
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill $(cat app.pid) || true
+            rm app.pid
+          fi
+
+      - name: Fail build if E2E tests failed
+        if: steps.e2e-tests.outcome == 'failure'
+        run: |
+          echo "❌ E2E tests failed - breaking the build"
+          exit 1
+
+  # Build and Deploy Artifacts - only on main branch
+  build-artifact:
+    name: Build Deployment Artifact
+    runs-on: ubuntu-latest
+    needs: [ci, e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --production
+
+      - name: Create deployment package
+        run: |
+          mkdir -p dist
+          cp -r . dist/
+          cd dist
+          rm -rf node_modules .git .github cypress coverage test *.log
+          npm ci --production --silent
+          cd ..
+          tar -czf yeetcode-app-${{ github.sha }}.tar.gz -C dist .
+
+      - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: src/playwright-report/
+          name: yeetcode-deployment-${{ github.sha }}
+          path: yeetcode-app-${{ github.sha }}.tar.gz
+          retention-days: 30
+
+      - name: Create release info
+        run: |
+          echo "Release Information" > release-info.txt
+          echo "==================" >> release-info.txt
+          echo "Commit SHA: ${{ github.sha }}" >> release-info.txt
+          echo "Branch: ${{ github.ref_name }}" >> release-info.txt
+          echo "Build Date: $(date -u)" >> release-info.txt
+          echo "Artifact: yeetcode-app-${{ github.sha }}.tar.gz" >> release-info.txt
+
+      - name: Upload release info
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-info-${{ github.sha }}
+          path: release-info.txt
