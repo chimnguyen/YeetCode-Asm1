@@ -30,7 +30,7 @@ jobs:
       - name: Start app server
         run: |
           nohup npm start &
-          sleep 5
+          sleep 10
         working-directory: ./src
 
       - name: Run Playwright E2E tests
@@ -38,6 +38,7 @@ jobs:
         working-directory: ./src
 
       - name: Upload Playwright HTML report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
